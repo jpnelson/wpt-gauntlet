@@ -8,7 +8,7 @@ const optionsSchema = {
     describe: "The url to test",
   },
   output: {
-    default: "profile",
+    default: "test",
     type: "string",
     describe:
       "The output profile name prefix. Will be suffixed with the count, eg. ${output}-1.json",
@@ -32,6 +32,22 @@ const optionsSchema = {
     default: 10,
     type: "number",
     describe: "The max pool size, for parallel requests",
+  },
+  batchSize: {
+    default: 20,
+    type: "number",
+    describe: "The max number of tests to allow running at once",
+  },
+  batchDelay: {
+    default: 0,
+    type: "number",
+    describe: "The amount of time to allow between tests",
+  },
+  resultType: {
+    default: "profile",
+    type: "string",
+    describe:
+      "Comma separated list of data to collect. Options include profile,summary",
   },
   testIds: {
     default: null,

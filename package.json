@@ -1,13 +1,14 @@
 {
   "name": "wpt-gauntlet",
   "version": "1.0.0",
-  "description": "",
+  "description": "A CLI for web page test that automates test creation and data collection from those tests",
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "author": "",
-  "license": "ISC",
+  "bin": "./index.js",
+  "author": "Josh Nelson",
+  "license": "MIT",
   "dependencies": {
     "chalk": "^5.0.1",
     "cli-progress": "^3.10.0",

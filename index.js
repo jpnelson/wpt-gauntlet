@@ -9,6 +9,11 @@ import { Pool } from "./Pool.js";
 const wpt = new WebPageTest("www.webpagetest.org");
 
 const API_KEY = process.env.WPT_APIKEY;
+if (!API_KEY) {
+  throw new Error(
+    "WPT_APIKEY was undefined. Please provide it as an environment variable"
+  );
+}
 
 async function runTest({ url, runs = 1 }) {
   return new Promise((resolve, reject) => {
@@ -17,6 +22,7 @@ async function runTest({ url, runs = 1 }) {
       {
         key: API_KEY,
         timeline: 1,
+        profiler: 1,
         timelineCallStack: 5,
         firstViewOnly: true,
         runs,
@@ -74,57 +80,95 @@ async function waitForTest({ testId, timeout, logOutput = true }) {
     }, POLL_INTERVAL_MS);
   });
 }
-async function main(config) {
-  const MAX_RUNS_PER_TEST = 10;
 
-  const { url, runs, output, timeout, testIds, outputDirectory } = config;
-  const pool = new Pool(config.pool);
-  let testIdsToFetch = testIds ? testIds.split(",") : null;
-
-  if (!testIdsToFetch) {
-    // Eg. MAX_RUNS_PER_TEST=10, runs=44, produces [10, 10, 10, 10, 4]
-    const testBatches = [
-      ...Array(Math.floor(runs / MAX_RUNS_PER_TEST)).fill(MAX_RUNS_PER_TEST),
-      runs % MAX_RUNS_PER_TEST,
-    ];
-
-    const tests = testBatches.map((runs) =>
-      pool.whenFree(async () => {
-        return await runTest({ runs, url });
-      })
+/**
+ * Collect summary test results from a particular test ID
+ * @param { testId }
+ * @returns An array of summary results, one for each run
+ */
+async function getTestResults({ testId }) {
+  return new Promise((resolve, reject) => {
+    wpt.getTestResults(
+      testId,
+      {
+        key: API_KEY,
+      },
+      (err, result) => {
+        if (err) {
+          reject(err);
+        }
+        // Drill into firstView since we're currently always doing first view only
+        resolve(Object.values(result.data.runs).map((run) => run.firstView));
+      }
     );
+  });
+}
 
-    const settledResults = await Promise.allSettled(tests);
+/**
+ * Split a total into batches, Eg. batchSize=10, total=44, produces [10, 10, 10, 10, 4]
+ * @param {*} total
+ * @param {*} batchSize
+ * @returns
+ */
+function splitIntoBatches(total, batchSize) {
+  return [
+    ...Array(Math.floor(total / batchSize)).fill(batchSize),
+    total % batchSize,
+  ].filter((n) => n > 0);
+}
 
-    testIdsToFetch = settledResults.map(
-      ({
-        value: {
-          data: { testId },
-        },
-      }) => testId
-    );
+async function startTests({ url, runs, maxRunsPerTest, pool }) {
+  const runsForTests = splitIntoBatches(runs, maxRunsPerTest);
 
-    log(`Tests started. test ids: ${JSON.stringify(testIdsToFetch)}`);
-  } else {
-    log(
-      `testIds provided: ${JSON.stringify(
-        testIdsToFetch
-      )}. Skipped kicking off new tests`
-    );
-  }
+  const tests = runsForTests.map((runs) =>
+    pool.whenFree(async () => {
+      return await runTest({ runs, url });
+    })
+  );
 
-  log(`Waiting ${timeout} minutes for tests to be completed`);
+  const settledResults = await Promise.allSettled(tests);
 
-  const timelineStatusPromises = testIdsToFetch.map((testId) => {
-    return waitForTest({ testId, timeout });
+  const testIdsToFetch = settledResults.map(
+    ({
+      value: {
+        data: { testId },
+      },
+    }) => testId
+  );
+
+  return testIdsToFetch;
+}
+
+async function collectSummaries({
+  testIds,
+  timeout,
+  output,
+  outputDirectoryPath,
+}) {
+  const resultPromises = testIds.map((testId) => {
+    return getTestResults({ testId, timeout });
   });
 
-  const timelineStatuses = await Promise.allSettled(timelineStatusPromises);
+  const summaries = (await Promise.allSettled(resultPromises))
+    .map((summary) => summary.value)
+    .flat();
 
-  log(`All tests completed.`);
+  summaries.forEach((summary, index) => {
+    fs.writeFileSync(
+      path.join(outputDirectoryPath, `${output}-summary-${index}.json`),
+      JSON.stringify(summary)
+    );
+  });
+}
 
-  const outputDirectoryPath = path.resolve(outputDirectory);
-  const individualTimelines = timelineStatuses
+async function collectProfiles({
+  output,
+  outputDirectoryPath,
+  testStatuses,
+  maxRunsPerTest,
+  pool,
+}) {
+  const individualTimelines = testStatuses
     .map(
       (
         {
@@ -142,7 +186,7 @@ async function main(config) {
           timelinesToFetch.push({
             testId,
             run: i,
-            index: batch * MAX_RUNS_PER_TEST + i,
+            index: batch * maxRunsPerTest + i,
           });
         }
         return timelinesToFetch;
@@ -155,7 +199,7 @@ async function main(config) {
       await pool.whenFree(async () => {
         const timelineData = await getTimelineData({ testId, run });
         fs.writeFileSync(
-          path.join(outputDirectoryPath, `${output}-${index}.json`),
+          path.join(outputDirectoryPath, `${output}-profile-${index}.json`),
           JSON.stringify(timelineData)
         );
       });
@@ -163,8 +207,102 @@ async function main(config) {
   );
 
   await Promise.allSettled(outputWritePromises);
+}
 
-  log(`Test output written to files in ${outputDirectoryPath}`);
+async function main(config) {
+  const MAX_RUNS_PER_TEST = 10;
+
+  const {
+    url,
+    runs,
+    timeout,
+    testIds,
+    outputDirectory,
+    output,
+    resultType,
+    batchSize,
+    batchDelay,
+  } = config;
+
+  const outputDirectoryPath = path.resolve(outputDirectory);
+  const shouldOutputSummary = resultType.includes("summary");
+  const shouldOutputProfile = resultType.includes("profile");
+
+  const pool = new Pool(config.pool);
+  let testIdsToFetch = testIds ? testIds.split(",") : null;
+  let testStatuses = [];
+
+  if (!testIdsToFetch) {
+    testIdsToFetch = [];
+    const batchesToRun = splitIntoBatches(runs, batchSize);
+    let batchIndex = 0;
+    for (let batch of batchesToRun) {
+      batchIndex++;
+      const testIdsInBatch = await startTests({
+        url,
+        runs: batch,
+        maxRunsPerTest: MAX_RUNS_PER_TEST,
+        pool,
+      });
+      log(
+        `Test batch ${batchIndex} of ${
+          batchesToRun.length
+        } started. testIds in batch: ${testIdsInBatch.join(",")}`
+      );
+
+      log(`Waiting ${timeout} minutes for tests to be completed`);
+
+      const testStatusPromises = testIdsToFetch.map((testId) => {
+        return waitForTest({ testId, timeout });
+      });
+      const testBatchStatuses = await Promise.allSettled(testStatusPromises);
+      testStatuses.push(...testBatchStatuses);
+      testIdsToFetch.push(...testIdsInBatch);
+      log(`Batch completed.`);
+    }
+    log(`All tests complete. testIds: ${testIdsToFetch.join(",")}`);
+  } else {
+    log(
+      `testIds provided: ${testIdsToFetch.join(
+        ","
+      )}. Skipped kicking off new tests.`
+    );
+
+    log(`Waiting ${timeout} minutes for tests to be completed`);
+
+    const testStatusPromises = testIdsToFetch.map((testId) => {
+      return waitForTest({ testId, timeout });
+    });
+
+    testStatuses = await Promise.allSettled(testStatusPromises);
+
+    log(`All tests completed.`);
+  }
+
+  // Summary results
+  if (shouldOutputSummary) {
+    log(`Collecting summaries.`);
+    await collectSummaries({
+      outputDirectoryPath,
+      testIds: testIdsToFetch,
+      timeout,
+      output,
+    });
+    log(`Summaries written to files in ${outputDirectoryPath}`);
+  }
+
+  // Profile results
+  if (shouldOutputProfile) {
+    log(`Collecting profiles.`);
+    await collectProfiles({
+      outputDirectoryPath,
+      testStatuses,
+      maxRunsPerTest: MAX_RUNS_PER_TEST,
+      output,
+      pool,
+    });
+    log(`Profiles written to files in ${outputDirectoryPath}`);
+  }
 
   return Promise.resolve();
 }
