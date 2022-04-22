@@ -1,6 +1,6 @@
 {
   "name": "wpt-gauntlet",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "A CLI for web page test that automates test creation and data collection from those tests",
   "main": "index.js",
   "scripts": {
