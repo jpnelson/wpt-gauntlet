@@ -101,7 +101,7 @@ $ npx wpt-gauntlet --url "https://example.com" --resultType profile --runs 100
 Gives us 100 json files in `./output` that we can then run `tracex` over:
 
 ```sh
-$ npx tracex extract "../output/profile-*" --functions "foo"
+$ npx tracex "../output/profile-*" --functions "foo"
 ...
 [📊 tracex] --- Results ---
 fileName,function.foo:timeTotal,function.foo:samplesPresent,function.foo:sampleTotal
