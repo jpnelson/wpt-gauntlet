@@ -2,25 +2,14 @@
 
 wpt-gauntlet is a tool for running a page through a "gauntlet" of web page test runs. This can be combined with `jq` or `tracex` to do custom lab performance benchmarking at a scale large enough for statistical significance:
 
-```
-$ npx wpt-gauntlet --url "https://example.com" --resultType profile --runs 100
-
-[⚔️ wpt-gauntlet] Tests started. test ids: 220420_AiDc0W_4XY,...
-[⚔️ wpt-gauntlet] Waiting 2 minutes for tests to be completed
-[⚔️ wpt-gauntlet] All tests completed.
-[⚔️ wpt-gauntlet] Profiles written to files in ./output
-
-$ ls ./output
-profile-0.json
-profile-1.json
-...
-profile-99.json
-```
+![Screenshot of wpt-gauntlet](docs/screenshot.png)
 
 You might need wpt-gauntlet if:
 
 - The metrics you need to calculate are custom, or not easily available in other lab testing tools
 - You need statistical significance for benchmarking (eg. profiling two versions of the same page may require a large number of trials)
+
+**✨ Use with [tracex](https://github.com/jpnelson/tracex) for an end-to-end benchmarking solution!**
 
 ## Usage
 
