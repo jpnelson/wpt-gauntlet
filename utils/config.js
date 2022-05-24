@@ -7,6 +7,11 @@ const optionsSchema = {
     type: "string",
     describe: "The url to test",
   },
+  script: {
+    default: null,
+    type: "string",
+    describe: "A script to run",
+  },
   output: {
     default: "test",
     type: "string",

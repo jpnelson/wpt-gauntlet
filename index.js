@@ -17,10 +17,19 @@ if (!API_KEY) {
   );
 }
 
-async function runTest({ url, runs = 1 }) {
+async function runTest({ url, script, runs = 1 }) {
+  let scriptString = null;
+  if (script) {
+    scriptString = fs.readFileSync(script, "utf8");
+    if (url) {
+      log(
+        "Both URL and script provided: Script takes precedence and the url provided will be ignored"
+      );
+    }
+  }
   return new Promise((resolve, reject) => {
     wpt.runTest(
-      url,
+      scriptString || url,
       {
         key: API_KEY,
         timeline: 1,
@@ -29,6 +38,8 @@ async function runTest({ url, runs = 1 }) {
         firstViewOnly: true,
         runs,
         label: "wpt-gauntlet",
+        chromeTrace: true,
+        traceCategories: "cc,benchmark",
       },
       (err, data) => {
         if (err) {
@@ -119,12 +130,12 @@ function splitIntoBatches(total, batchSize) {
   ].filter((n) => n > 0);
 }
 
-async function startTests({ url, runs, maxRunsPerTest, pool }) {
+async function startTests({ url, script, runs, maxRunsPerTest, pool }) {
   const runsForTests = splitIntoBatches(runs, maxRunsPerTest);
 
   const tests = runsForTests.map((runs) =>
     pool.whenFree(async () => {
-      return await runTest({ runs, url });
+      return await runTest({ runs, url, script });
     })
   );
 
@@ -215,6 +226,7 @@ async function main(config) {
   const MAX_RUNS_PER_TEST = 10;
 
   const {
+    script,
     url,
     runs,
     timeout,
@@ -241,6 +253,7 @@ async function main(config) {
     for (let batch of batchesToRun) {
       batchIndex++;
       const testIdsInBatch = await startTests({
+        script,
         url,
         runs: batch,
         maxRunsPerTest: MAX_RUNS_PER_TEST,
@@ -254,7 +267,7 @@ async function main(config) {
 
       log(`Waiting ${timeout} minutes for tests to be completed`);
 
-      const testStatusPromises = testIdsToFetch.map((testId) => {
+      const testStatusPromises = testIdsInBatch.map((testId) => {
         return waitForTest({ testId, timeout });
       });
       const testBatchStatuses = await Promise.allSettled(testStatusPromises);
@@ -262,7 +275,22 @@ async function main(config) {
       testIdsToFetch.push(...testIdsInBatch);
       log(`Batch completed.`);
     }
-    log(`All tests complete. testIds: ${testIdsToFetch.join(",")}`);
+
+    // TODO: handle timeout here: remove testIds
+    testStatuses.forEach((testStatus) => {
+      if (testStatus.status === "rejected") {
+        log(`Waiting for test failed.`);
+        if (testStatus.reason) {
+          log(testStatus.reason);
+        }
+      }
+    });
+
+    log(
+      `All tests complete. testIds: ${testIdsToFetch.join(
+        ","
+      )}, testStatuses: ${JSON.stringify(testStatuses)}`
+    );
   } else {
     log(
       `testIds provided: ${testIdsToFetch.join(
