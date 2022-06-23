@@ -48,6 +48,12 @@ const optionsSchema = {
     type: "number",
     describe: "The amount of time to allow between tests",
   },
+  offsetIndex: {
+    default: 0,
+    type: "number",
+    describe:
+      "The index to offset by when naming files, useful for extending batches",
+  },
   resultType: {
     default: "profile",
     type: "string",

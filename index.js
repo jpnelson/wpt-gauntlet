@@ -7,6 +7,7 @@ import WebPageTest from "webpagetest";
 import { getConfig } from "./utils/config.js";
 import { log } from "./utils/log.js";
 import { Pool } from "./Pool.js";
+import { error } from "./utils/error.js";
 
 const wpt = new WebPageTest("www.webpagetest.org");
 
@@ -39,7 +40,7 @@ async function runTest({ url, script, runs = 1 }) {
         runs,
         label: "wpt-gauntlet",
         chromeTrace: true,
-        traceCategories: "cc,benchmark",
+        traceCategories: "-*,cc,benchmark",
       },
       (err, data) => {
         if (err) {
@@ -178,9 +179,9 @@ async function collectProfiles({
   output,
   outputDirectoryPath,
   testStatuses,
-  maxRunsPerTest,
   pool,
 }) {
+  let indexOffset = 0;
   const individualTimelines = testStatuses
     .map(
       (
@@ -199,9 +200,10 @@ async function collectProfiles({
           timelinesToFetch.push({
             testId,
             run: i,
-            index: batch * maxRunsPerTest + i,
+            index: indexOffset + i,
           });
         }
+        indexOffset += runs;
         return timelinesToFetch;
       }
     )
@@ -210,11 +212,18 @@ async function collectProfiles({
   const outputWritePromises = individualTimelines.map(
     async ({ testId, run, index }) => {
       await pool.whenFree(async () => {
-        const timelineData = await getTimelineData({ testId, run });
-        fs.writeFileSync(
-          path.join(outputDirectoryPath, `${output}-profile-${index}.json`),
-          JSON.stringify(timelineData)
-        );
+        try {
+          const timelineData = await getTimelineData({ testId, run });
+          fs.writeFileSync(
+            path.join(outputDirectoryPath, `${output}-profile-${index}.json`),
+            JSON.stringify(timelineData)
+          );
+        } catch (e) {
+          error(
+            `Could not write profile ${output}-profile-${index}.json due to the following error:`
+          );
+          console.error(e);
+        }
       });
     }
   );
@@ -270,10 +279,16 @@ async function main(config) {
       const testStatusPromises = testIdsInBatch.map((testId) => {
         return waitForTest({ testId, timeout });
       });
+
       const testBatchStatuses = await Promise.allSettled(testStatusPromises);
       testStatuses.push(...testBatchStatuses);
       testIdsToFetch.push(...testIdsInBatch);
       log(`Batch completed.`);
+
+      if (batchDelay > 0) {
+        log(`Waiting ${batchDelay} minute(s) between batches`);
+        await new Promise((resolve) => setTimeout(resolve, batchDelay * 1000));
+      }
     }
 
     // TODO: handle timeout here: remove testIds
@@ -327,7 +342,6 @@ async function main(config) {
     await collectProfiles({
       outputDirectoryPath,
       testStatuses,
-      maxRunsPerTest: MAX_RUNS_PER_TEST,
       output,
       pool,
     });
