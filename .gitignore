@@ -1,5 +1,9 @@
 node_modules
-output
-.DS_Store
-wpt-scripts
-scripts
+*
+!docs
+!utils
+!*.js
+!package.json
+!package-lock.json
+!.prettierrc
+!*.md
